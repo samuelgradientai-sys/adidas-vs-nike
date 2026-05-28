@@ -12,6 +12,16 @@ __pycache__/
 # Streamlit
 .streamlit/secrets.toml
 
+# Variables de entorno / secretos
+.env
+.env.local
+**/.env
+**/.env.local
+
+# Datos de Olist (viven en Supabase, no en git — 61 MB)
+CLASE 2/data/
+CLASE 2/data/olist/
+
 # Logs
 *.log
 streamlit.err.log
