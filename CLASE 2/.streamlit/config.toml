@@ -1,0 +1,11 @@
+# Tema nativo de Streamlit alineado con la identidad Claude.
+# Pinta los widgets nativos (sidebar, botones, multiselect, sliders,
+# date_input) sin requerir CSS adicional desde el app.
+
+[theme]
+base = "light"
+primaryColor = "#D97757"               # coral Claude
+backgroundColor = "#F5F0E8"            # crema cálido
+secondaryBackgroundColor = "#FAF7F0"   # papel
+textColor = "#3D3929"                  # marrón profundo
+font = "serif"

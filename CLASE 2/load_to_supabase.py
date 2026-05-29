@@ -1,18 +1,19 @@
 """
-Olist → Supabase · Cargador one-shot
+Loader · Adidas vs Nike → Supabase
 ─────────────────────────────────────────────────────────────
-Lee los 8 CSVs de `data/olist/` e inserta los registros en
-las tablas de Supabase definidas en `supabase_schema.sql`.
+Lee `data/olist/Adidas_Vs_Nike_intentar_abrir.csv` (separador `*`)
+e inserta en las 2 tablas de Supabase:
+  · brands   (5 marcas, normaliza typo "Adidas Adidas ORIGINALS")
+  · products (3,268 filas, conserva re-listados del scraping)
 
 Prerrequisitos:
   1. Ejecutar `supabase_schema.sql` en el SQL Editor del dashboard.
-  2. Tener el archivo `.env` en esta misma carpeta con
-     SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY.
+  2. `.env` con SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY en esta carpeta.
   3. `pip install -r requirements.txt`
 
 Uso:
-  python load_to_supabase.py            # carga las 8 tablas
-  python load_to_supabase.py customers  # carga solo una tabla
+  python load_to_supabase.py            # carga brands + products
+  python load_to_supabase.py brands     # solo una tabla
 """
 from __future__ import annotations
 
@@ -22,12 +23,11 @@ import sys
 import time
 from pathlib import Path
 
-# Forzar UTF-8 en stdout para que los emojis no rompan en consola Windows (cp1252)
+# Forzar UTF-8 en stdout para que los emojis no rompan en Windows (cp1252)
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
-import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 from supabase import create_client
@@ -40,16 +40,15 @@ KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 if not URL or not KEY:
     sys.exit("❌ Faltan SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY en .env")
 
-DATA_DIR = Path(__file__).parent / "data" / "olist"
-BATCH_SIZE = 500  # supabase-py recomienda < 1000 filas por request
+CSV_PATH = Path(__file__).parent / "data" / "olist" / "Adidas_Vs_Nike_intentar_abrir.csv"
+BATCH_SIZE = 500
 
 supabase = create_client(URL, KEY)
 
 
-# ── Helpers ─────────────────────────────────────────────────
+# ── Helpers reutilizables ───────────────────────────────────
 def to_records(df: pd.DataFrame) -> list[dict]:
-    """DF → lista de dicts JSON-safe. Convierte NaN/NaT → None y
-    timestamps → ISO 8601 string (lo que Supabase espera)."""
+    """DF → lista de dicts JSON-safe. NaN/NaT → None, datetime → ISO."""
     out = df.copy()
     for col in out.select_dtypes(include=["datetime64[ns]", "datetime64[ns, UTC]"]).columns:
         out[col] = out[col].dt.strftime("%Y-%m-%d %H:%M:%S").where(out[col].notna(), None)
@@ -57,14 +56,10 @@ def to_records(df: pd.DataFrame) -> list[dict]:
     return out.to_dict(orient="records")
 
 
-def nullable_int(s: pd.Series) -> pd.Series:
-    """Convierte float-con-NaN → Int64 (nullable) para que el JSON
-    no mande 1234.0 sino 1234 (y los NaN se serialicen como None)."""
-    return s.astype("Int64")
-
-
-def upsert_chunked(table: str, df: pd.DataFrame, on_conflict: str) -> None:
-    """Upsert paginado. on_conflict = lista de columnas PK separadas por coma."""
+def insert_chunked(table: str, df: pd.DataFrame) -> None:
+    """Insert paginado. NO usa upsert porque products usa surrogate PK
+    auto-incremental: re-correr crearía filas duplicadas. Para re-cargar,
+    primero corre `supabase_schema.sql` que dropea y recrea las tablas."""
     records = to_records(df)
     total = len(records)
     n_batches = math.ceil(total / BATCH_SIZE)
@@ -73,136 +68,118 @@ def upsert_chunked(table: str, df: pd.DataFrame, on_conflict: str) -> None:
     for i in range(n_batches):
         chunk = records[i * BATCH_SIZE : (i + 1) * BATCH_SIZE]
         try:
-            supabase.table(table).upsert(chunk, on_conflict=on_conflict).execute()
+            supabase.table(table).insert(chunk).execute()
         except Exception as e:
             print(f"   ❌ batch {i+1}/{n_batches} falló: {e}")
             print(f"      muestra del primer registro: {chunk[0] if chunk else 'vacío'}")
             raise
-        if (i + 1) % 10 == 0 or i + 1 == n_batches:
+        if (i + 1) % 5 == 0 or i + 1 == n_batches:
             elapsed = time.time() - t0
             rate = (i + 1) * BATCH_SIZE / elapsed if elapsed > 0 else 0
             print(f"   ✓ {i+1}/{n_batches} batches  ({rate:,.0f} rows/s)")
     print(f"   ✅ {table} completo en {time.time()-t0:.1f}s\n")
 
 
+# ── Carga + transformación del CSV ──────────────────────────
+def load_csv() -> pd.DataFrame:
+    df = pd.read_csv(CSV_PATH, sep="*")
+
+    # Normalizar typo "Adidas Adidas ORIGINALS" → "Adidas ORIGINALS"
+    df["Brand"] = df["Brand"].replace({"Adidas Adidas ORIGINALS": "Adidas ORIGINALS"})
+
+    # Listing Price = 0 → NULL (out of stock en el CSV)
+    df.loc[df["Listing Price"] == 0, "Listing Price"] = pd.NA
+
+    # Last Visited → datetime
+    df["Last Visited"] = pd.to_datetime(df["Last Visited"], errors="coerce")
+
+    # Rating == 0 con Reviews == 0 → NULL en rating (no calificado aún)
+    mask_no_rating = (df["Rating"] == 0) & (df["Reviews"] == 0)
+    df.loc[mask_no_rating, "Rating"] = pd.NA
+
+    return df
+
+
 # ── Loaders por tabla ───────────────────────────────────────
-def load_customers() -> None:
-    df = pd.read_csv(DATA_DIR / "olist_customers_dataset.csv")
-    df["customer_zip_code_prefix"] = nullable_int(df["customer_zip_code_prefix"])
-    upsert_chunked("olist_customers", df, on_conflict="customer_id")
+def brand_code(brand_name: str) -> str:
+    """'Adidas ORIGINALS' → 'adidas_originals'."""
+    return brand_name.lower().replace("/", "_").replace("  ", " ").strip().replace(" ", "_")
 
 
-def load_sellers() -> None:
-    df = pd.read_csv(DATA_DIR / "olist_sellers_dataset.csv")
-    df["seller_zip_code_prefix"] = nullable_int(df["seller_zip_code_prefix"])
-    upsert_chunked("olist_sellers", df, on_conflict="seller_id")
+def parent_of(brand_name: str) -> str:
+    return "Nike" if brand_name.startswith("Nike") else "Adidas"
 
 
-def load_category_translation() -> None:
-    df = pd.read_csv(DATA_DIR / "product_category_name_translation.csv", encoding="utf-8-sig")
-
-    # El dataset original de Olist tiene categorías (p. ej. 'pc_gamer') que
-    # aparecen en products pero NO en este archivo de traducción.
-    # Para no romper el FK, añadimos esas huérfanas usando el nombre PT
-    # como fallback del nombre EN.
-    products = pd.read_csv(DATA_DIR / "olist_products_dataset.csv", usecols=["product_category_name"])
-    used_categories = set(products["product_category_name"].dropna().unique())
-    known_categories = set(df["product_category_name"])
-    missing = used_categories - known_categories
-    if missing:
-        print(f"⚠️  {len(missing)} categoría(s) sin traducción oficial → uso PT como fallback EN: {sorted(missing)}")
-        df_extra = pd.DataFrame({
-            "product_category_name": sorted(missing),
-            "product_category_name_english": sorted(missing),
-        })
-        df = pd.concat([df, df_extra], ignore_index=True)
-
-    upsert_chunked("product_category_name_translation", df, on_conflict="product_category_name")
-
-
-def load_products() -> None:
-    df = pd.read_csv(DATA_DIR / "olist_products_dataset.csv")
-    int_cols = [
-        "product_name_lenght", "product_description_lenght", "product_photos_qty",
-        "product_weight_g", "product_length_cm", "product_height_cm", "product_width_cm",
-    ]
-    for c in int_cols:
-        df[c] = nullable_int(df[c])
-    upsert_chunked("olist_products", df, on_conflict="product_id")
-
-
-def load_orders() -> None:
-    df = pd.read_csv(
-        DATA_DIR / "olist_orders_dataset.csv",
-        parse_dates=[
-            "order_purchase_timestamp", "order_approved_at",
-            "order_delivered_carrier_date", "order_delivered_customer_date",
-            "order_estimated_delivery_date",
-        ],
+def load_brands() -> dict[str, int]:
+    """Inserta las marcas únicas y devuelve mapping name → brand_id."""
+    df = load_csv()
+    brands_df = (
+        df[["Brand"]].drop_duplicates().sort_values("Brand").reset_index(drop=True)
+        .rename(columns={"Brand": "brand_name"})
     )
-    upsert_chunked("olist_orders", df, on_conflict="order_id")
+    brands_df["brand_code"] = brands_df["brand_name"].apply(brand_code)
+    brands_df["parent_brand"] = brands_df["brand_name"].apply(parent_of)
+
+    print(f"📦 Marcas detectadas: {len(brands_df)}")
+    print(brands_df.to_string(index=False))
+    print()
+
+    insert_chunked("brands", brands_df[["brand_code", "brand_name", "parent_brand"]])
+
+    # Leer back para obtener los brand_id asignados por Postgres
+    resp = supabase.table("brands").select("brand_id, brand_name").execute()
+    return {r["brand_name"]: r["brand_id"] for r in resp.data}
 
 
-def load_order_items() -> None:
-    df = pd.read_csv(
-        DATA_DIR / "olist_order_items_dataset.csv",
-        parse_dates=["shipping_limit_date"],
-    )
-    df["order_item_id"] = nullable_int(df["order_item_id"])
-    upsert_chunked("olist_order_items", df, on_conflict="order_id,order_item_id")
+def load_products(brand_id_map: dict[str, int]) -> None:
+    df = load_csv()
+    df["brand_id"] = df["Brand"].map(brand_id_map)
+    if df["brand_id"].isna().any():
+        missing = df.loc[df["brand_id"].isna(), "Brand"].unique().tolist()
+        raise RuntimeError(f"Brand sin mapping a brand_id: {missing}")
 
+    products = pd.DataFrame({
+        "product_code":      df["Product ID"],
+        "brand_id":          df["brand_id"].astype("Int64"),
+        "product_name":      df["Product Name"],
+        "description":       df["Description"],
+        "listing_price_inr": df["Listing Price"].astype("Int64"),
+        "sale_price_inr":    df["Sale Price"].astype("Int64"),
+        "discount_pct":      df["Discount"].astype("Int64"),
+        "rating":            df["Rating"],
+        "reviews_count":     df["Reviews"].astype("Int64"),
+        "last_visited":      df["Last Visited"],
+    })
 
-def load_order_payments() -> None:
-    df = pd.read_csv(DATA_DIR / "olist_order_payments_dataset.csv")
-    df["payment_sequential"] = nullable_int(df["payment_sequential"])
-    df["payment_installments"] = nullable_int(df["payment_installments"])
-    upsert_chunked("olist_order_payments", df, on_conflict="order_id,payment_sequential")
-
-
-def load_order_reviews() -> None:
-    df = pd.read_csv(
-        DATA_DIR / "olist_order_reviews_dataset.csv",
-        parse_dates=["review_creation_date", "review_answer_timestamp"],
-    )
-    df["review_score"] = nullable_int(df["review_score"])
-    # PK compuesta (review_id, order_id) — desduplicamos por si acaso
-    before = len(df)
-    df = df.drop_duplicates(subset=["review_id", "order_id"], keep="first")
-    if len(df) < before:
-        print(f"⚠️  reviews: {before - len(df):,} duplicados (review_id, order_id) descartados")
-    upsert_chunked("olist_order_reviews", df, on_conflict="review_id,order_id")
+    insert_chunked("products", products)
 
 
 # ── Orquestación ────────────────────────────────────────────
-LOADERS = {
-    "customers":            load_customers,
-    "sellers":              load_sellers,
-    "category_translation": load_category_translation,
-    "products":             load_products,
-    "orders":               load_orders,
-    "order_items":          load_order_items,
-    "order_payments":       load_order_payments,
-    "order_reviews":        load_order_reviews,
-}
-
-# Orden de dependencias (FKs)
-ORDER = [
-    "customers", "sellers", "category_translation", "products",
-    "orders", "order_items", "order_payments", "order_reviews",
-]
+LOADERS = ["brands", "products"]
 
 
 def main() -> None:
-    targets = sys.argv[1:] or ORDER
+    targets = sys.argv[1:] or LOADERS
     unknown = [t for t in targets if t not in LOADERS]
     if unknown:
-        sys.exit(f"❌ Tabla(s) desconocida(s): {unknown}\n   Disponibles: {list(LOADERS)}")
+        sys.exit(f"❌ Tabla(s) desconocida(s): {unknown}\n   Disponibles: {LOADERS}")
 
-    print(f"🛒 Olist → Supabase ({URL})")
+    print(f"👟 Adidas vs Nike → Supabase ({URL})")
     print(f"   Tablas a cargar: {targets}\n")
     t0 = time.time()
-    for name in targets:
-        LOADERS[name]()
+
+    brand_id_map: dict[str, int] = {}
+    if "brands" in targets:
+        brand_id_map = load_brands()
+    if "products" in targets:
+        if not brand_id_map:
+            # cargar solo products → asume brands ya en Supabase
+            resp = supabase.table("brands").select("brand_id, brand_name").execute()
+            brand_id_map = {r["brand_name"]: r["brand_id"] for r in resp.data}
+            if not brand_id_map:
+                sys.exit("❌ No hay brands en Supabase. Corre primero el loader de brands.")
+        load_products(brand_id_map)
+
     print(f"🎉 Listo en {time.time()-t0:.1f}s totales.")
 
 

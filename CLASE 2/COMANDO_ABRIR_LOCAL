@@ -1,0 +1,18 @@
+# Comandos para abrir el dashboard localmente
+# ─────────────────────────────────────────────────────────────
+
+# Dashboard actual · Adidas vs Nike (Supabase + Claude UI)
+cd ".\CLASE 2"
+..\.venv\Scripts\python.exe -m streamlit run app_adidas_nike.py
+
+
+# Cargador de datos a Supabase (lee el CSV y popula brands + products)
+cd ".\CLASE 2"
+..\.venv\Scripts\python.exe load_to_supabase.py
+
+
+# ─────────────────────────────────────────────────────────────
+# Legacy (proyectos anteriores)
+# ─────────────────────────────────────────────────────────────
+# cd ".\CLASE 2"
+# ..\.venv\Scripts\python.exe -m streamlit run APP_7.py
