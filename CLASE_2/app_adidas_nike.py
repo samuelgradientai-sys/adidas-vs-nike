@@ -62,20 +62,45 @@ CLAUDE_PALETTE = {
     "ink_alt":    "#1F1E1B",  # negro Nike-ish
 }
 
-# Mapping para parent brand: Adidas → coral cálido, Nike → ink (negro)
-PARENT_BRAND_COLORS = {
-    "Adidas": CLAUDE_PALETTE["primary"],
-    "Nike":   CLAUDE_PALETTE["ink_alt"],
+# ─────────────────────────────────────────────────────────────
+# Sistema de color de DATOS — independiente del tema del dashboard
+# ─────────────────────────────────────────────────────────────
+# El branding beige (CLAUDE_PALETTE) se usa SOLO para el chrome (hero, KPIs,
+# tabs, sidebar). Las gráficas usan su propia paleta para que el color tenga
+# significado estable y no dependa de la estética de la página.
+#   · Categórica  : Okabe-Ito (colorblind-safe)
+#   · Secuencial  : Viridis (perceptualmente uniforme)
+#   · Semánticos  : rojo = riesgo, verde = bueno, gris = contexto (estables)
+VIZ = {
+    "chart_bg":   "#FFFFFF",   # fondo de gráfica (la página sigue beige)
+    "grid":       "#E6E6E6",   # rejilla/ejes neutros (no el border beige)
+    "axis_text":  "#333333",   # texto de ejes neutro (no el ink beige)
+    "reference":  "#9AA0A6",   # líneas de referencia / medianas (contexto)
+    "alert":      "#D62728",   # rojo — SIEMPRE = riesgo/negativo
+    "positive":   "#2CA02C",   # verde — SIEMPRE = bueno
+    "structural": "#8C8C8C",   # barras no categóricas (Pareto)
+    "emphasis":   "#333333",   # trendline OLS global / protagonistas neutros
 }
 
+# Mapping para parent brand (Okabe-Ito): Adidas → azul, Nike → naranja.
+# Significado estable de color en TODAS las gráficas categóricas.
+PARENT_BRAND_COLORS = {
+    "Adidas": "#0072B2",  # azul
+    "Nike":   "#E69F00",  # naranja
+}
+
+# Secuencia categórica de respaldo (Okabe-Ito completa)
 PLOTLY_SEQUENCE = [
-    CLAUDE_PALETTE["primary"],
-    CLAUDE_PALETTE["ink_alt"],
-    CLAUDE_PALETTE["accent"],
-    CLAUDE_PALETTE["warning"],
-    CLAUDE_PALETTE["muted"],
-    CLAUDE_PALETTE["danger"],
+    "#0072B2",  # azul
+    "#E69F00",  # naranja
+    "#009E73",  # verde
+    "#CC79A7",  # rosa
+    "#56B4E9",  # celeste
+    "#D55E00",  # bermellón
+    "#F0E442",  # amarillo
 ]
+
+SEQUENTIAL_SCALE = "Viridis"  # heatmap: perceptualmente uniforme, colorblind-safe
 
 
 # ─────────────────────────────────────────────────────────────
@@ -240,11 +265,11 @@ st.markdown(
 # Layout compartido de Plotly
 # ─────────────────────────────────────────────────────────────
 plotly_layout = dict(
-    paper_bgcolor=CLAUDE_PALETTE["surface"],
-    plot_bgcolor=CLAUDE_PALETTE["surface"],
-    font=dict(color=CLAUDE_PALETTE["ink"], family="Inter"),
-    xaxis=dict(gridcolor=CLAUDE_PALETTE["border"], linecolor=CLAUDE_PALETTE["border"]),
-    yaxis=dict(gridcolor=CLAUDE_PALETTE["border"], linecolor=CLAUDE_PALETTE["border"]),
+    paper_bgcolor=VIZ["chart_bg"],
+    plot_bgcolor=VIZ["chart_bg"],
+    font=dict(color=VIZ["axis_text"], family="Inter"),
+    xaxis=dict(gridcolor=VIZ["grid"], linecolor=VIZ["grid"]),
+    yaxis=dict(gridcolor=VIZ["grid"], linecolor=VIZ["grid"]),
     colorway=PLOTLY_SEQUENCE,
     legend=dict(orientation="h", y=-0.18, x=0.5, xanchor="center"),
     margin=dict(l=10, r=10, t=30, b=10),
@@ -644,9 +669,11 @@ with tab1:
             labels=parent_summary["parent_brand"],
             values=parent_summary["n"],
             hole=0.55,
-            marker=dict(colors=[PARENT_BRAND_COLORS.get(p, CLAUDE_PALETTE["muted"])
+            marker=dict(colors=[PARENT_BRAND_COLORS.get(p, VIZ["structural"])
                                 for p in parent_summary["parent_brand"]]),
-            textfont=dict(color="white", size=14, family="Inter"),
+            textposition="outside",
+            textinfo="label+percent",
+            textfont=dict(color=VIZ["axis_text"], size=14, family="Inter"),
             hovertemplate="<b>%{label}</b><br>%{value:,} productos<br>%{percent}<extra></extra>",
         ))
         fig_donut.update_layout(**plotly_layout, height=380)
@@ -698,25 +725,25 @@ with tab1:
         )
         fig_quad.update_traces(
             textposition="top center",
-            textfont=dict(size=11, color=CLAUDE_PALETTE["ink"], family="Inter"),
+            textfont=dict(size=11, color=VIZ["axis_text"], family="Inter"),
         )
-        fig_quad.add_vline(x=median_price, line_color=CLAUDE_PALETTE["muted"],
+        fig_quad.add_vline(x=median_price, line_color=VIZ["reference"],
                            line_dash="dot")
-        fig_quad.add_hline(y=median_rating, line_color=CLAUDE_PALETTE["muted"],
+        fig_quad.add_hline(y=median_rating, line_color=VIZ["reference"],
                            line_dash="dot")
-        # Etiquetas de cuadrante
+        # Etiquetas de cuadrante — semántica estable (verde=bueno, rojo=malo, gris=neutro)
         x_hi, x_lo = brand_quad["price"].max(), brand_quad["price"].min()
         y_hi, y_lo = brand_quad["rating"].max(), brand_quad["rating"].min()
         for x, y, txt, color in [
-            (x_hi, y_hi, "⭐ Premium adoradas", CLAUDE_PALETTE["accent"]),
-            (x_hi, y_lo, "🔥 Caras + flojas",   CLAUDE_PALETTE["danger"]),
-            (x_lo, y_hi, "🌱 Asequibles top",   CLAUDE_PALETTE["primary"]),
-            (x_lo, y_lo, "⚓ Asequibles flojas", CLAUDE_PALETTE["muted"]),
+            (x_hi, y_hi, "⭐ Premium adoradas", VIZ["positive"]),
+            (x_hi, y_lo, "🔥 Caras + flojas",   VIZ["alert"]),
+            (x_lo, y_hi, "🌱 Asequibles top",   VIZ["positive"]),
+            (x_lo, y_lo, "⚓ Asequibles flojas", VIZ["reference"]),
         ]:
             fig_quad.add_annotation(
                 x=x, y=y, text=f"<b>{txt}</b>", showarrow=False,
                 font=dict(size=10, color=color),
-                bgcolor=CLAUDE_PALETTE["surface"],
+                bgcolor=VIZ["chart_bg"],
                 bordercolor=color, borderwidth=1, borderpad=4,
                 xanchor="right" if x == x_hi else "left",
                 yanchor="top" if y == y_hi else "bottom",
@@ -747,10 +774,10 @@ with tab2:
         # Mean line para anclar la lectura
         mean_disc = df["discount_pct"].mean()
         fig_disc_hist.add_vline(
-            x=mean_disc, line_color=CLAUDE_PALETTE["ink"], line_dash="dash",
+            x=mean_disc, line_color=VIZ["reference"], line_dash="dash",
             annotation_text=f"media {mean_disc:.1f}%",
             annotation_position="top right",
-            annotation_font_color=CLAUDE_PALETTE["ink"],
+            annotation_font_color=VIZ["axis_text"],
         )
         fig_disc_hist.update_layout(**plotly_layout, height=360, legend_title_text="Casa")
         st.plotly_chart(fig_disc_hist, use_container_width=True)
@@ -774,10 +801,10 @@ with tab2:
         fig_disc_brand.update_traces(textposition="outside")
         # Línea de la media global del slice
         fig_disc_brand.add_vline(
-            x=mean_disc, line_color=CLAUDE_PALETTE["ink"], line_dash="dash",
+            x=mean_disc, line_color=VIZ["reference"], line_dash="dash",
             annotation_text=f"media {mean_disc:.0f}%",
             annotation_position="top",
-            annotation_font_color=CLAUDE_PALETTE["ink"],
+            annotation_font_color=VIZ["axis_text"],
         )
         fig_disc_brand.update_layout(**plotly_layout, height=360, legend_title_text="Casa")
         st.plotly_chart(fig_disc_brand, use_container_width=True)
@@ -797,7 +824,7 @@ with tab2:
                 labels={"listing_price_inr": "Listing price (₹)",
                         "sale_price_inr": "Sale price (₹)"},
                 trendline="ols", trendline_scope="overall",
-                trendline_color_override=CLAUDE_PALETTE["primary_dk"],
+                trendline_color_override=VIZ["emphasis"],
             )
         except Exception:
             fig_scatter = px.scatter(
@@ -813,10 +840,10 @@ with tab2:
         # Línea de identidad y=x → sin descuento
         max_val = max(df_scatter["listing_price_inr"].max(), df_scatter["sale_price_inr"].max())
         fig_scatter.add_shape(type="line", x0=0, y0=0, x1=max_val, y1=max_val,
-                              line=dict(color=CLAUDE_PALETTE["muted"], dash="dot", width=1))
+                              line=dict(color=VIZ["reference"], dash="dot", width=1))
         fig_scatter.add_annotation(x=max_val * 0.92, y=max_val * 0.96, text="sin descuento",
                                    showarrow=False,
-                                   font=dict(color=CLAUDE_PALETTE["muted"], size=10))
+                                   font=dict(color=VIZ["reference"], size=10))
         fig_scatter.update_layout(**plotly_layout, height=420, legend_title_text="Casa")
         st.plotly_chart(fig_scatter, use_container_width=True)
     else:
@@ -899,11 +926,7 @@ with tab3:
             z=heat_pivot.values,
             x=[str(c) for c in heat_pivot.columns],
             y=[str(r) for r in heat_pivot.index],
-            colorscale=[
-                [0.0, CLAUDE_PALETTE["surface"]],
-                [0.5, CLAUDE_PALETTE["warning"]],
-                [1.0, CLAUDE_PALETTE["primary_dk"]],
-            ],
+            colorscale=SEQUENTIAL_SCALE,
             hovertemplate="Rating %{y} · Precio %{x}<br>%{z:,} productos<extra></extra>",
         ))
         fig_heat.update_layout(**plotly_layout, height=320,
@@ -933,31 +956,31 @@ with tab3:
         fig_pareto = go.Figure()
         fig_pareto.add_trace(go.Bar(
             x=top_show["rank"], y=top_show["reviews_count"],
-            marker_color=CLAUDE_PALETTE["primary"], name="Reviews del producto",
+            marker_color=VIZ["structural"], name="Reviews del producto",
             hovertemplate="Producto #%{x}<br>Reviews: %{y:,}<extra></extra>",
         ))
         fig_pareto.add_trace(go.Scatter(
             x=prod_rev["rank"], y=prod_rev["cum_share"], yaxis="y2",
             mode="lines",
-            line=dict(color=CLAUDE_PALETTE["ink_alt"], width=2.5),
+            line=dict(color=VIZ["alert"], width=2.5),
             name="Acumulado",
             hovertemplate="Top %{x} productos<br>Acumulado: %{y:.1%}<extra></extra>",
         ))
         fig_pareto.add_vline(
-            x=rank_50, line_color=CLAUDE_PALETTE["accent"], line_dash="dot",
+            x=rank_50, line_color=VIZ["reference"], line_dash="dot",
             annotation_text=f"50% en top {rank_50}",
             annotation_position="top",
-            annotation_font_color=CLAUDE_PALETTE["accent"],
+            annotation_font_color=VIZ["axis_text"],
         )
         fig_pareto.add_vline(
-            x=rank_80, line_color=CLAUDE_PALETTE["warning"], line_dash="dot",
+            x=rank_80, line_color=VIZ["reference"], line_dash="dot",
             annotation_text=f"80% en top {rank_80}",
             annotation_position="top",
-            annotation_font_color=CLAUDE_PALETTE["warning"],
+            annotation_font_color=VIZ["axis_text"],
         )
         layout_pareto = dict(plotly_layout)
         layout_pareto["yaxis"] = dict(
-            gridcolor=CLAUDE_PALETTE["border"], title="Reviews por producto",
+            gridcolor=VIZ["grid"], title="Reviews por producto",
         )
         layout_pareto["yaxis2"] = dict(
             overlaying="y", side="right", showgrid=False,

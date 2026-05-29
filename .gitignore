@@ -19,8 +19,8 @@ __pycache__/
 **/.env.local
 
 # Datos de Olist (viven en Supabase, no en git — 61 MB)
-CLASE 2/data/
-CLASE 2/data/olist/
+CLASE_2/data/
+CLASE_2/data/olist/
 
 # Logs
 *.log
